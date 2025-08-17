@@ -1,6 +1,7 @@
 import streamlit as st
 from auth import show_auth_page, logout_user
 from user_manager import UserManager
+from post_manager import PostManager
 
 #화면구성 단계
 # 페이지 설정
@@ -10,9 +11,340 @@ st.set_page_config(
     layout="wide"
 )
 
+# 메뉴 옵션 상수 정의
+#에러 후 수정
+MENU_OPTIONS = ["🏠 홈", "✍️ 포스트 작성", "📋 내 포스트", "👤 프로필"]
+
+def show_home_page(current_user, post_mgr, user_mgr):
+    """홈 화면 - 실제 게시글 목록"""
+    st.header("📝 최근 포스트")
+
+    # 게시글 불러오기
+    posts_with_stats = post_mgr.get_posts_with_stats()
+
+    if len(posts_with_stats) == 0:
+        st.info("📝 아직 작성된 포스트가 없습니다. 첫 번째 포스트를 작성해보세요!")
+        if st.button("✍️ 포스트 작성하러 가기"):
+            st.session_state.menu = "✍️ 포스트 작성"
+            st.rerun()
+        return
+
+    # 사용자 이름 가져오기 위해 users와 조인
+    users_df = user_mgr.load_users()
+    posts_display = posts_with_stats.merge(
+        users_df[['user_id', 'username']],
+        on='user_id',
+        how='left'
+    )
+
+    # 게시글 하나씩 표시
+    for idx, post in posts_display.iterrows():
+        with st.container():
+            # 프로필 이미지와 정보
+            col1, col2 = st.columns([1, 11])
+
+            with col1:
+                st.image("https://images.unsplash.com/photo-1743449661678-c22cd73b338a?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxmZWF0dXJlZC1waG90b3MtZmVlZHwzfHx8ZW58MHx8fHx8", width=50)
+
+            with col2:
+                # 사용자 정보와 액션 버튼
+                col_info, col_action = st.columns([8, 4])
+
+                with col_info:
+                    time_str = post['timestamp'].split(' ')[1][:5]  # HH:MM 형식
+                    st.markdown(f"**{post['username']}** • {time_str}")
+
+                with col_action:
+                    # 삭제 버튼 (작성자만)
+                    if post['user_id'] == current_user['user_id']:
+                        if st.button("🗑️", key=f"del_{post['post_id']}", help="삭제"):
+                            if post_mgr.delete_post(post['post_id'], current_user['user_id']):
+                                st.success("게시글이 삭제되었습니다!")
+                                st.rerun()
+
+                # 게시글 내용
+                st.markdown(post['content'])
+
+                # 좋아요, 리트윗 버튼 (새로운 레이아웃)
+                col_like, col_retweet, col_space = st.columns([2, 2, 8])
+
+                with col_like : 
+                    is_liked = post_mgr.is_liked_by_user(current_user['user_id'], post['post_id'])
+                    like_emoji = "❤️" if is_liked else "🤍"
+                    like_count = int(post['like_count'])
+
+                    if st.button(f"{like_emoji} {like_count}", key=f"like_{post['post_id']}"):
+                        liked = post_mgr.toggle_like(current_user['user_id'], post['post_id'])
+                        if liked:
+                            st.success("좋아요!")
+                        else:
+                            st.info("좋아요 취소")
+                        st.rerun()
+
+                with col_retweet:  # 새로 추가
+                    is_retweeted = post_mgr.is_retweeted_by_user(current_user['user_id'], post['post_id'])
+                    retweet_emoji = "🔄" if is_retweeted else "↻"
+                    retweet_count = int(post['retweet_count'])
+                    
+                    if st.button(f"{retweet_emoji} {retweet_count}", key=f"retweet_{post['post_id']}"):
+                        retweeted = post_mgr.toggle_retweet(current_user['user_id'], post['post_id'])
+                        if retweeted:
+                            st.success("리트윗!")
+                        else:
+                            st.info("리트윗 취소")
+                        st.rerun()
+
+        st.divider()
+
+def show_write_page(current_user, post_mgr):
+    """글쓰기 페이지"""
+    st.header("✍️ 새 포스트 작성")
+
+    st.markdown("💡 **다른 사람들에게 공유하고 싶은 포스트를 작성해보세요**")
+
+    # 글쓰기 폼
+    with st.form("write_form", clear_on_submit=True):
+        content = st.text_area(
+            "포스트 내용",
+            placeholder="포스트 내용을 작성해주세요",
+            height=200
+        )
+
+        col1, col2, col3 = st.columns([2, 1, 2])
+        with col2:
+            submitted = st.form_submit_button("🚀 게시하기", type="primary")
+
+        if submitted:
+            if content.strip():
+                success = post_mgr.create_post(current_user['user_id'], content.strip())
+
+                if success:
+                    st.success("포스트가 게시되었습니다! 🎉")
+                    st.balloons()
+                    import time
+                    time.sleep(1.5)  # 1.5초 잠시 멈춤
+                    st.session_state.menu = "🏠 홈"
+                    st.rerun()
+                else:
+                    st.error("게시 중 오류가 발생했습니다.")
+            else:
+                st.error("내용을 입력해주세요!")
+
+    st.divider()
+
+def show_profile_page(current_user, post_mgr, user_mgr):
+    """프로필 페이지 - 간단 버전"""
+    st.header("👤 내 프로필")
+
+    # 기본 정보
+    col1, col2 = st.columns([1, 3])
+
+    with col1:
+        st.image("https://images.unsplash.com/photo-1743449661678-c22cd73b338a?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxmZWF0dXJlZC1waG90b3MtZmVlZHwzfHx8ZW58MHx8fHx8", width=100)
+
+    with col2:
+        st.markdown(f"### {current_user['username']}")
+        st.markdown(f"**가입일:** {current_user['created_at']}")
+
+    st.divider()
+
+    # 내가 쓴 글 목록
+    st.subheader("📝 내가 작성한 포스트")
+
+    posts_with_stats = post_mgr.get_posts_with_stats()
+
+    # DataFrame이 비어있거나 user_id 컬럼이 없는 경우 체크
+    if len(posts_with_stats) == 0 or 'user_id' not in posts_with_stats.columns:
+        st.info("📝 아직 작성한 포스트가 없습니다.")
+        if st.button("✍️ 첫 포스트 작성하기"):
+            st.session_state.menu = "✍️ 포스트 작성"
+            st.rerun()
+        return
+
+    my_posts = posts_with_stats[posts_with_stats['user_id'] == current_user['user_id']]
+
+    if len(my_posts) > 0:
+        st.info(f"총 {len(my_posts)}개의 포스트를 작성했습니다.")
+
+        for idx, post in my_posts.iterrows():
+            with st.container():
+                col1, col2 = st.columns([8, 4])
+
+                with col1:
+                    # 내용 미리보기 (100자)
+                    preview = post['content'][:100] + "..." if len(post['content']) > 100 else post['content']
+                    st.markdown(f"**{preview}**")
+                    st.caption(f"작성: {post['timestamp']} • 좋아요: {int(post['like_count'])}개 • 리트윗: {int(post['retweet_count'])}개")
+
+                with col2:
+                    if st.button("🗑️ 삭제", key=f"profile_del_{post['post_id']}"):
+                        if post_mgr.delete_post(post['post_id'], current_user['user_id']):
+                            st.success("삭제되었습니다!")
+                            st.rerun()
+
+            st.divider()
+    else:
+        st.info("📝 아직 작성한 포스트가 없습니다.")
+        if st.button("✍️ 첫 포스트 작성하기"):
+            st.session_state.menu = "✍️ 포스트 작성"
+            st.rerun()
+
+def show_my_posts_page(current_user, post_mgr, user_mgr):
+    """내 포스트 페이지 - 내가 쓴 글, 리트윗한 글, 좋아요 누른 글"""
+    st.header("📋 내 포스트")
+
+    tab1, tab2, tab3 = st.tabs(["✍️ 내가 쓴 글", "🔄 리트윗한 글", "❤️ 좋아요 누른 글"])
+
+    # 모든 포스트 데이터 불러오기
+    posts_with_stats = post_mgr.get_posts_with_stats()
+    users_df = user_mgr.load_users()
+    
+    # 데이터가 있는지 확인
+    if len(posts_with_stats) == 0:
+        with tab1:
+            st.info("📝 아직 작성된 포스트가 없습니다.")
+        with tab2:
+            st.info("🔄 아직 리트윗한 포스트가 없습니다.")
+        with tab3:
+            st.info("❤️ 아직 좋아요를 누른 포스트가 없습니다.")
+        return
+
+    # 사용자 이름과 조인
+    posts_display = posts_with_stats.merge(
+        users_df[['user_id', 'username']],
+        on='user_id',
+        how='left'
+    )
+
+    # 탭 1: 내가 쓴 글
+    with tab1:
+        my_posts = posts_display[posts_display['user_id'] == current_user['user_id']]
+        
+        if len(my_posts) > 0:
+            st.info(f"총 {len(my_posts)}개의 포스트를 작성했습니다.")
+            
+            for idx, post in my_posts.iterrows():
+                display_post_card(post, current_user, post_mgr, show_delete=True, key_prefix="my")
+        else:
+            st.info("📝 아직 작성한 포스트가 없습니다.")
+            if st.button("✍️ 첫 포스트 작성하기", key="write_first_post"):
+                st.session_state.menu = "✍️ 포스트 작성"
+                st.rerun()
+
+    # 탭 2: 리트윗한 글
+    with tab2:
+        retweet_df = post_mgr.load_retweet()
+        my_retweets = retweet_df[retweet_df['user_id'] == current_user['user_id']]
+        
+        if len(my_retweets) > 0:
+            # 내가 리트윗한 포스트들 가져오기
+            retweeted_post_ids = my_retweets['post_id'].tolist()
+            retweeted_posts = posts_display[posts_display['post_id'].isin(retweeted_post_ids)]
+            
+            st.info(f"총 {len(retweeted_posts)}개의 포스트를 리트윗했습니다.")
+            
+            for idx, post in retweeted_posts.iterrows():
+                # 리트윗 표시 추가
+                st.markdown("🔄 **리트윗했습니다**")
+                display_post_card(post, current_user, post_mgr, show_delete=False, key_prefix="retweet")
+        else:
+            st.info("🔄 아직 리트윗한 포스트가 없습니다.")
+
+    # 탭 3: 좋아요 누른 글
+    with tab3:
+        likes_df = post_mgr.load_likes()
+        my_likes = likes_df[likes_df['user_id'] == current_user['user_id']]
+        
+        if len(my_likes) > 0:
+            # 내가 좋아요한 포스트들 가져오기
+            liked_post_ids = my_likes['post_id'].tolist()
+            liked_posts = posts_display[posts_display['post_id'].isin(liked_post_ids)]
+            
+            st.info(f"총 {len(liked_posts)}개의 포스트에 좋아요를 눌렀습니다.")
+            
+            for idx, post in liked_posts.iterrows():
+                # 좋아요 표시 추가
+                st.markdown("❤️ **좋아요를 눌렀습니다**")
+                display_post_card(post, current_user, post_mgr, show_delete=False, key_prefix="liked")
+        else:
+            st.info("❤️ 아직 좋아요를 누른 포스트가 없습니다.")
+
+def display_post_card(post, current_user, post_mgr, show_delete=False, key_prefix=""):
+    """포스트 카드 표시 함수 (재사용 가능)"""
+    with st.container():
+        # 프로필 이미지와 정보
+        col1, col2 = st.columns([1, 11])
+
+        with col1:
+            st.image("https://images.unsplash.com/photo-1743449661678-c22cd73b338a?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxmZWF0dXJlZC1waG90b3MtZmVlZHwzfHx8ZW58MHx8fHx8", width=50)
+
+        with col2:
+            # 사용자 정보와 액션 버튼
+            if show_delete:
+                col_info, col_action = st.columns([8, 4])
+                
+                with col_action:
+                    if st.button("🗑️ 삭제", key=f"{key_prefix}_del_{post['post_id']}", help="삭제"):
+                        if post_mgr.delete_post(post['post_id'], current_user['user_id']):
+                            st.success("게시글이 삭제되었습니다!")
+                            st.rerun()
+            else:
+                col_info = st.columns([1])[0]
+
+            with col_info:
+                time_str = post['timestamp'].split(' ')[1][:5]  # HH:MM 형식
+                st.markdown(f"**{post['username']}** • {time_str}")
+
+            # 게시글 내용
+            st.markdown(post['content'])
+
+            # 좋아요, 리트윗 버튼
+            col_like, col_retweet, col_space = st.columns([2, 2, 8])
+
+            with col_like:
+                is_liked = post_mgr.is_liked_by_user(current_user['user_id'], post['post_id'])
+                like_emoji = "❤️" if is_liked else "🤍"
+                like_count = int(post['like_count'])
+
+                if st.button(f"{like_emoji} {like_count}", key=f"{key_prefix}_like_{post['post_id']}"):
+                    liked = post_mgr.toggle_like(current_user['user_id'], post['post_id'])
+                    if liked:
+                        st.success("좋아요!")
+                    else:
+                        st.info("좋아요 취소")
+                    st.rerun()
+
+            with col_retweet:
+                is_retweeted = post_mgr.is_retweeted_by_user(current_user['user_id'], post['post_id'])
+                retweet_emoji = "🔄" if is_retweeted else "↻"
+                retweet_count = int(post['retweet_count'])
+                
+                if st.button(f"{retweet_emoji} {retweet_count}", key=f"{key_prefix}_retweet_{post['post_id']}"):
+                    retweeted = post_mgr.toggle_retweet(current_user['user_id'], post['post_id'])
+                    if retweeted:
+                        st.success("리트윗!")
+                    else:
+                        st.info("리트윗 취소")
+                    st.rerun()
+
+    st.divider()
+
+# 매니저 초기화
+@st.cache_resource
+def init_managers():
+    return UserManager(), PostManager()
+
+user_mgr, post_mgr = init_managers()
+
 # Session State 초기화 (새 접속시 자동 로그아웃)
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
+
+if 'menu' not in st.session_state or st.session_state.menu not in MENU_OPTIONS :
+    # 원래 작성 코드
+    # st.session_state.menu = "🏠 홈"
+    #에러 후 수정 코드
+    st.session_state.menu = MENU_OPTIONS[0]
 
 # 로그인 체크
 if not st.session_state.logged_in:
@@ -24,167 +356,49 @@ else:
     current_user = st.session_state.current_user
 
     # 헤더 영역
-    st.title("🍑 소셜 피드")
-    st.markdown("**유용한 LLM 프롬프트를 공유하는 공간입니다**")
-
+    col1, col2 = st.columns([4, 1])
+    with col1 :
+        st.title("🍑 소셜 피드")
+        st.markdown(f"**{current_user['username']}님 환영합니다!**")
+    with col2 :
+        if st.button("🚪 로그아웃") :
+            logout_user()
+            
     # 사이드바 - 네비게이션
     st.sidebar.title("📋 메뉴")
+    st.sidebar.markdown(f"👤 **{current_user['username']}**")
+    #st.sidebar.markdown(f"🆔 {current_user['user_id']}")
+    #수정 전, 에러 전
+    # menu = st.sidebar.selectbox(
+    #     "📋 메뉴",
+    #     ["🏠 홈", "✍️ 포스트 작성", "📋 내 포스트", "👤 프로필"].index(st.session_state.menu)
+    # )
+    try:
+        current_index = MENU_OPTIONS.index(st.session_state.menu)
+    except ValueError:
+        current_index = 0
+        st.session_state.menu = MENU_OPTIONS[0]
+    
     menu = st.sidebar.selectbox(
-        "선택하세요",
-        ["🏠 홈", "✍️ 포스트 작성", "📋 내 포스트", "👤 프로필"]
+        "📋 메뉴",
+        MENU_OPTIONS,
+        index=current_index
     )
+
+    # 메뉴 변경 감지
+    if menu != st.session_state.menu:
+        st.session_state.menu = menu
+        st.rerun()
 
     # 메인 영역
     if menu == "🏠 홈":
-        st.header("📝 최근 포스트")
-
-        # 샘플 데이터로 게시글 목록 표시
-        sample_posts = [
-            {
-                "user": "AI마스터",
-                "content": "ChatGPT로 코딩할 때 이 프롬프트를 쓰면 정말 좋아요!\n\n'다음 코드를 파이썬으로 작성해주세요. 주석도 자세히 달아주시고, 예외처리도 포함해주세요.'",
-                "time": "2분 전",
-                "retweet" : 3,
-                "likes": 15
-            },
-            {
-                "user": "프롬프트러",
-                "content": "번역 프롬프트 공유합니다.\n\n'다음 문장을 자연스러운 한국어로 번역해주세요. 문화적 맥락을 고려해서 의역해도 좋습니다.'",
-                "time": "10분 전",
-                "retweet" : 13,
-                "likes": 8
-            },
-            {
-                "user": "데이터분석가",
-                "content": "데이터 분석 프롬프트 추천!\n\n'이 데이터를 분석해서 인사이트 3가지만 간단히 정리해주세요. 시각화 코드도 파이썬으로 작성해주세요.'",
-                "time": "1시간 전",
-                "retweet" : 25,
-                "likes": 23
-            }
-        ]
-
-        # 게시글 표시
-        for post in sample_posts:
-            with st.container():
-                col1, col2 = st.columns([1, 10])
-
-                with col1:
-                    st.image("https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=50&h=50&fit=crop&crop=face", width=50)
-
-                with col2:
-                    st.markdown(f"**{post['user']}** • {post['time']}")
-                    st.markdown(post['content'])
-
-                    # 리트윗 버튼 (기능 없이 UI만)
-                    col_retweet, col_like, col_share = st.columns([1, 1, 6])    #공간배분
-                    with col_retweet:
-                        st.button(f"📍 {post['retweet']}", key=f"retweet_{post['user']}")
-                        #📌
-
-                    # 좋아요 버튼 (기능 없이 UI만)
-                    #col_like, col_share = st.columns([1, 8])
-                    with col_like:
-                        st.button(f"❤️ {post['likes']}", key=f"like_{post['user']}")
-
-            st.divider()
+        show_home_page(current_user, post_mgr, user_mgr)
 
     elif menu == "✍️ 포스트 작성":
-        st.header("✍️ 새 포스트 작성")
-
-        # 글쓰기 폼
-        with st.form("post_form"):
-            content = st.text_area(
-                "포스트를 작성해주세요!",
-                placeholder="포스트를 작성하여 모두에게 공유해보세요!",
-                height=150
-            )
-
-            category = st.selectbox(
-                "카테고리",
-                ["💻 코딩", "📝 글쓰기", "🌍 번역", "📊 데이터분석", "🎨 창작", "📚 학습", "기타"]
-            )
-
-            submitted = st.form_submit_button("게시하기", type="primary")
-
-            if submitted:
-                if content:
-                    st.success("포스트가 게시되었습니다! 🎉")
-                    st.balloons()  # 재미있는 효과
-                else:
-                    st.error("내용을 입력해주세요!")
+        show_write_page(current_user, post_mgr)
 
     elif menu == "👤 프로필":
-        st.header("👤 내 프로필")
-
-        # 프로필 정보 (더미 데이터)
-        col1, col2 = st.columns([1, 3])
-
-        with col1:
-            st.image("https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=face", width=100)
-
-        with col2:
-            st.markdown("### AI마스터")
-            st.markdown("**가입일:** 2024년 1월")
-            st.markdown("**작성한 프롬프트:** 12개")
-            st.markdown("**받은 좋아요 :** 156개")
-            st.markdown("**글 알티된 수 :** 221개")
-
-        st.divider()
-
-        st.subheader("📝 내가 작성한 프롬프트")
-        st.info("아직 작성한 프롬프트가 없습니다.")
+        show_profile_page(current_user, post_mgr, user_mgr)
 
     elif menu == "📋 내 포스트" :
-        st.header("📋 내 포스트")
-
-        tab1, tab2 = st.tabs(["📋 내 포스트", "📌 리트윗한 포스트"])
-
-        # 샘플 데이터로 게시글 목록 표시
-        sample_posts = [
-            {
-                "user": "AI마스터",
-                "content": "ChatGPT로 코딩할 때 이 프롬프트를 쓰면 정말 좋아요!\n\n'다음 코드를 파이썬으로 작성해주세요. 주석도 자세히 달아주시고, 예외처리도 포함해주세요.'",
-                "time": "2분 전",
-                "retweet" : 3,
-                "likes": 15
-            },
-            {
-                "user": "프롬프트러",
-                "content": "번역 프롬프트 공유합니다.\n\n'다음 문장을 자연스러운 한국어로 번역해주세요. 문화적 맥락을 고려해서 의역해도 좋습니다.'",
-                "time": "10분 전",
-                "retweet" : 13,
-                "likes": 8
-            },
-            {
-                "user": "데이터분석가",
-                "content": "데이터 분석 프롬프트 추천!\n\n'이 데이터를 분석해서 인사이트 3가지만 간단히 정리해주세요. 시각화 코드도 파이썬으로 작성해주세요.'",
-                "time": "1시간 전",
-                "retweet" : 25,
-                "likes": 23
-            }
-        ]
-
-        # 게시글 표시
-        for post in sample_posts:
-            with st.container():
-                col1, col2 = st.columns([1, 10])
-
-                with col1:
-                    st.image("https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=50&h=50&fit=crop&crop=face", width=50)
-
-                with col2:
-                    st.markdown(f"**{post['user']}** • {post['time']}")
-                    st.markdown(post['content'])
-
-                    # 리트윗 버튼 (기능 없이 UI만)
-                    col_retweet, col_like, col_share = st.columns([1, 1, 6])    #공간배분
-                    with col_retweet:
-                        st.button(f"📍 {post['retweet']}", key=f"retweet_{post['user']}")
-                        #📌
-
-                    # 좋아요 버튼 (기능 없이 UI만)
-                    #col_like, col_share = st.columns([1, 8])
-                    with col_like:
-                        st.button(f"❤️ {post['likes']}", key=f"like_{post['user']}")
-
-            st.divider()
+        show_my_posts_page(current_user, post_mgr, user_mgr)

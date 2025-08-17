@@ -1,2 +1,4 @@
 user_id,username,password,created_at
 user_001,테스트러,test123,2025-08-14
+user_002,나오,1234,2025-08-17
+user_003,루모,fnah,2025-08-17
