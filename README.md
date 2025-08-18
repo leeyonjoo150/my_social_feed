@@ -28,6 +28,12 @@ streamlit run app.py
 - likes.csv       # 좋아요 정보 
 - retweet.csv     # 리트윗 정보 
 
+# 개발 도구 및 환경
++ VSCode : 주요 개발 도구로 사용, 전반적인 개발 작업 수행
++ CMD : 패키지 설치, Git 명령어 입력 등 보조 개발 환경으로 활용
++ Streamlit : 웹 애플리케이션 프레임워크로 프론트엔드를 구축하는데 사용
++ GitHub : 버전 관리 및 백업 및 공유를 위한 플랫폼으로 사용
+
 # 기술 스택
 + 프론트엔드 : streamlit
 + 백엔드 : python, pandas
