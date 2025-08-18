@@ -141,6 +141,45 @@ class PostManager:
         result['retweet_count'] = result['retweet_count'].fillna(0).astype(int)
         
         return result
+    
+    def get_posts_by_author(self, author_name, user_mgr):
+        """작성자별 포스트 검색 (새로 추가된 메서드)"""
+        # 모든 포스트와 통계 가져오기
+        posts_with_stats = self.get_posts_with_stats()
+        
+        if len(posts_with_stats) == 0:
+            return pd.DataFrame()
+        
+        # 사용자 정보와 조인
+        users_df = user_mgr.load_users()
+        posts_display = posts_with_stats.merge(
+            users_df[['user_id', 'username']],
+            on='user_id',
+            how='left'
+        )
+        
+        # 작성자 이름으로 필터링 (대소문자 구분 없이, 부분 일치)
+        author_lower = author_name.lower()
+        filtered_posts = posts_display[
+            posts_display['username'].str.lower().str.contains(author_lower, na=False)
+        ]
+        
+        return filtered_posts
+
+    def search_posts_by_content(self, search_term):
+        """포스트 내용으로 검색"""
+        posts_with_stats = self.get_posts_with_stats()
+        
+        if len(posts_with_stats) == 0:
+            return pd.DataFrame()
+        
+        # 내용으로 검색 (대소문자 구분 없이)
+        search_lower = search_term.lower()
+        filtered_posts = posts_with_stats[
+            posts_with_stats['content'].str.lower().str.contains(search_lower, na=False)
+        ]
+        
+        return filtered_posts
 
     def toggle_like(self, user_id, post_id):
         """좋아요 토글 (있으면 취소, 없으면 추가)"""

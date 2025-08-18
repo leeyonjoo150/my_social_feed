@@ -19,6 +19,30 @@ def show_home_page(current_user, post_mgr, user_mgr):
     """홈 화면 - 실제 게시글 목록"""
     st.header("📝 최근 포스트")
 
+    # 작성자 검색 기능 추가
+    search_col1, search_col2, search_col3 = st.columns([6, 1, 1])
+    
+    with search_col1:
+        search_author = st.text_input("🔍 작성자 검색", placeholder="작성자명을 입력하세요...", key="search_author_input")
+    
+    with search_col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # HTML 줄바꿈으로 더 정확한 높이 조정
+        if st.button("🔍 검색", use_container_width=True):
+            if search_author.strip():
+                st.session_state.search_filter = search_author.strip()
+            else:
+                st.session_state.search_filter = ""
+    
+    with search_col3:
+        st.markdown("<br>", unsafe_allow_html=True)  # HTML 줄바꿈으로 더 정확한 높이 조정
+        if st.button("⬅️ 전체보기", use_container_width=True):
+            st.session_state.search_filter = ""
+            st.rerun()
+
+    # 검색 필터 상태 초기화
+    if 'search_filter' not in st.session_state:
+        st.session_state.search_filter = ""
+
     # 게시글 불러오기
     posts_with_stats = post_mgr.get_posts_with_stats()
 
@@ -37,64 +61,81 @@ def show_home_page(current_user, post_mgr, user_mgr):
         how='left'
     )
 
+    # 작성자 검색 필터 적용
+    if st.session_state.search_filter:
+        search_term = st.session_state.search_filter.lower()
+        filtered_posts = posts_display[
+            posts_display['username'].str.lower().str.contains(search_term, na=False)
+        ]
+        
+        # 검색 결과 표시
+        if len(filtered_posts) > 0:
+            st.success(f"🔍 '{st.session_state.search_filter}' 검색 결과: {len(filtered_posts)}개의 포스트를 찾았습니다.")
+            posts_display = filtered_posts
+        else:
+            st.warning(f"🔍 '{st.session_state.search_filter}' 작성자의 포스트를 찾을 수 없습니다.")
+            posts_display = pd.DataFrame()  # 빈 데이터프레임
+    
+    # 검색 결과가 있거나 검색하지 않은 경우 포스트 표시
+    if len(posts_display) > 0:
     # 게시글 하나씩 표시
-    for idx, post in posts_display.iterrows():
-        with st.container():
-            # 프로필 이미지와 정보
-            col1, col2 = st.columns([1, 11])
+        for idx, post in posts_display.iterrows():
+            with st.container():
+                # 프로필 이미지와 정보
+                col1, col2 = st.columns([1, 11])
 
-            with col1:
-                st.image("https://images.unsplash.com/photo-1743449661678-c22cd73b338a?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxmZWF0dXJlZC1waG90b3MtZmVlZHwzfHx8ZW58MHx8fHx8", width=50)
+                with col1:
+                    st.image("https://images.unsplash.com/photo-1743449661678-c22cd73b338a?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxmZWF0dXJlZC1waG90b3MtZmVlZHwzfHx8ZW58MHx8fHx8", width=50)
 
-            with col2:
-                # 사용자 정보와 액션 버튼
-                col_info, col_action = st.columns([8, 4])
+                with col2:
+                    # 사용자 정보와 액션 버튼
+                    col_info, col_action = st.columns([8, 4])
 
-                with col_info:
-                    time_str = post['timestamp'].split(' ')[1][:5]  # HH:MM 형식
-                    st.markdown(f"**{post['username']}** • {time_str}")
+                    with col_info:
+                        time_str = post['timestamp'].split(' ')[1][:5]  # HH:MM 형식
+                        st.markdown(f"**{post['username']}** • {time_str}")
 
-                with col_action:
-                    # 삭제 버튼 (작성자만)
-                    if post['user_id'] == current_user['user_id']:
-                        if st.button("🗑️", key=f"del_{post['post_id']}", help="삭제"):
-                            if post_mgr.delete_post(post['post_id'], current_user['user_id']):
-                                st.success("게시글이 삭제되었습니다!")
-                                st.rerun()
+                    with col_action:
+                        # 삭제 버튼 (작성자만)
+                        if post['user_id'] == current_user['user_id']:
+                            if st.button("🗑️", key=f"del_{post['post_id']}", help="삭제"):
+                                if post_mgr.delete_post(post['post_id'], current_user['user_id']):
+                                    st.success("게시글이 삭제되었습니다!")
+                                    st.rerun()
 
-                # 게시글 내용
-                st.markdown(post['content'])
+                    # 게시글 내용
+                    st.markdown(post['content'])
 
-                # 좋아요, 리트윗 버튼 (새로운 레이아웃)
-                col_like, col_retweet, col_space = st.columns([2, 2, 8])
+                    # 좋아요, 리트윗 버튼 (새로운 레이아웃)
+                    col_like, col_retweet, col_space = st.columns([2, 2, 8])
 
-                with col_like : 
-                    is_liked = post_mgr.is_liked_by_user(current_user['user_id'], post['post_id'])
-                    like_emoji = "❤️" if is_liked else "🤍"
-                    like_count = int(post['like_count'])
+                    with col_like : 
+                        is_liked = post_mgr.is_liked_by_user(current_user['user_id'], post['post_id'])
+                        like_emoji = "❤️" if is_liked else "🤍"
+                        like_count = int(post['like_count'])
 
-                    if st.button(f"{like_emoji} {like_count}", key=f"like_{post['post_id']}"):
-                        liked = post_mgr.toggle_like(current_user['user_id'], post['post_id'])
-                        if liked:
-                            st.success("좋아요!")
-                        else:
-                            st.info("좋아요 취소")
-                        st.rerun()
+                        if st.button(f"{like_emoji} {like_count}", key=f"like_{post['post_id']}"):
+                            liked = post_mgr.toggle_like(current_user['user_id'], post['post_id'])
+                            if liked:
+                                st.success("좋아요!")
+                            else:
+                                st.info("좋아요 취소")
+                            st.rerun()
 
-                with col_retweet:  # 새로 추가
-                    is_retweeted = post_mgr.is_retweeted_by_user(current_user['user_id'], post['post_id'])
-                    retweet_emoji = "🔄" if is_retweeted else "↻"
-                    retweet_count = int(post['retweet_count'])
-                    
-                    if st.button(f"{retweet_emoji} {retweet_count}", key=f"retweet_{post['post_id']}"):
-                        retweeted = post_mgr.toggle_retweet(current_user['user_id'], post['post_id'])
-                        if retweeted:
-                            st.success("리트윗!")
-                        else:
-                            st.info("리트윗 취소")
-                        st.rerun()
+                    with col_retweet:  # 새로 추가
+                        is_retweeted = post_mgr.is_retweeted_by_user(current_user['user_id'], post['post_id'])
+                        retweet_emoji = "🔄" if is_retweeted else "↻"
+                        retweet_count = int(post['retweet_count'])
+                        
+                        if st.button(f"{retweet_emoji} {retweet_count}", key=f"retweet_{post['post_id']}"):
+                            retweeted = post_mgr.toggle_retweet(current_user['user_id'], post['post_id'])
+                            if retweeted:
+                                st.success("리트윗!")
+                            else:
+                                st.info("리트윗 취소")
+                            st.rerun()
 
-        st.divider()
+            st.divider()
 
 def show_write_page(current_user, post_mgr):
     """글쓰기 페이지"""
